@@ -1,0 +1,170 @@
+---
+title: "Pregunta adicional"
+author: "Jarod Salas y Kevin Córdoba"
+format: dashboard
+---
+
+```{r}
+#| label: carga-paquetes
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(plotly)
+library(leaflet)
+library(leaflet.extras)
+library(leafem)
+library(DT)
+library(ggplot2)
+library(sf)
+
+```
+
+
+Mapa de riqueza de especies de preocupación menor (LC)
+
+
+```{r}
+#| label: especies-roja
+
+registro_presencia <-
+  st_read("especies-reptiles.csv", quiet = TRUE)
+
+```
+
+```{r}
+#| label: carga-datos-reg-repitles
+
+reptiles_registro <-
+  read.delim("registros-reptiles.csv")
+```
+
+```{r}
+#| label: carga-datos-reg-socio
+
+rs_zonas <-
+  st_read("regiones-socioeconomicas.gpkg", quiet = TRUE) |>
+  st_transform(4326)
+  
+```
+
+```{r}
+#| label: carga-datos-reptiles
+#| message: false
+#| warning: false
+
+especies_reptiles <-
+  st_read(
+    "registros-reptiles.csv",
+    options = c(
+      "X_POSSIBLE_NAMES=decimalLongitude",
+      "Y_POSSIBLE_NAMES=decimalLatitude"   
+    ),
+    quiet = TRUE
+  )
+
+st_crs(especies_reptiles) <- 4326
+```
+
+```{r}
+squamata_lc <-
+  left_join(
+    x = especies_reptiles,
+    y = registro_presencia,
+    by = "species"
+  )
+```
+
+```{r}
+
+filter_squamata <-
+  squamata_lc |>
+  filter(iucnRedListCategory == "LC") |>
+  filter(class == "Squamata")
+
+```
+
+
+```{r}
+#| label: union-rs-squamata
+
+rs_union_squamata <-
+  st_join(
+    x = filter_squamata,
+    y = dplyr::select(rs_zonas, codigo),
+    join = st_within
+  )
+    
+```
+
+```{r}
+#| label: familia-squamata
+
+conteo_squamata <-
+  rs_union_squamata |>
+  st_drop_geometry() |>
+  group_by(codigo) |>
+  summarise(conteo_squamata_rs = n_distinct(species, na.rm = TRUE))
+```
+
+```{r}
+#| label: join-rs-iguana
+
+union_rs_squamata <-
+  left_join(
+    x = rs_zonas,
+    y = dplyr::select(conteo_squamata, codigo, conteo_squamata_rs),
+    by = "codigo"
+  )
+```
+
+```{r}
+#| label: mapa-leaflet
+
+# Paleta de colores   #funciona y falta mapa ESRI
+colores_union_squamata <-
+  colorNumeric(
+    palette = "Reds",
+    domain = union_rs_squamata$conteo_squamata_rs,
+    na.color = "transparent"
+  )
+
+# Mapa leaflet 2
+leaflet() |>
+  setView(
+    lng = -84,
+    lat = 9,
+    zoom = 7) |>
+  addTiles(group = "Mapa general (Open Street Map)") |>
+  addProviderTiles(provider = providers$Esri.WorldImagery, group = "Imágenes satelitales (Esri World Imagery)") |>
+  addPolygons(
+    data = union_rs_squamata,
+    fillColor = ~ colores_union_squamata(union_rs_squamata$conteo_squamata_rs),
+    fillOpacity = 0.8,
+    color = "black",
+    stroke = TRUE,
+    weight = 1.0,
+    popup = paste(
+      paste("<strong>Región socioeconómica:</strong>", union_rs_squamata$region),
+      paste("<strong>Riqueza de especies de Squamata:</strong>", union_rs_squamata$conteo_squamata_rs),
+      sep = '<br/>'
+    ),
+    group = "Riqueza especies Iguanidae"
+  ) |>
+  addLegend(
+    position = "bottomleft",
+    pal = colores_union_squamata,
+    values = union_rs_squamata$conteo_squamata_rs,
+    group = "Riqueza especies Squamata",
+    title = "Riqueza especies Squamata"
+  ) |>
+  addLayersControl(
+    baseGroups = c("Open Street Map", "Imágenes satelitales (Esri World Imagery)"),
+    overlayGroups = c("Riqueza especies Squamata")
+  ) |>
+  addResetMapButton() |>
+  addSearchOSM() |>
+  addMouseCoordinates() |>
+  addMiniMap(position = "bottomright") |>
+  addFullscreenControl()
+```
